@@ -21,7 +21,7 @@ public:
 	char * Name;
 	Cell_t * prev, * next;
 	bool is_root(){ return prev == NULL; }
-	void push_front( Cell_t * pCell ){
+	void cpush_front( Cell_t * pCell ){
 		assert( is_root() ); 
 		assert( pCell->prev == NULL && pCell->next == NULL ); // check for unhook
 		pCell->next = next;
@@ -31,7 +31,7 @@ public:
 		}
 		next = pCell;
 	}
-	void unhook(){
+	void cunhook(){
 		assert( !is_root() );
 		prev->next = next;
 		if( next )
@@ -39,7 +39,7 @@ public:
 		prev = NULL;
 		next = NULL;
 	}
-	int  size(){
+	int  csize(){
 		assert( is_root() );
 		Cell_t * cur = this;
 		int len = 0;
@@ -47,17 +47,32 @@ public:
 			;
 		return len;
 	}
+	bool cempty(){
+		assert( is_root() );
+		return next == NULL;
+	}
 };
 
 double ParseFile( char * ifname, std::map<std::string,int>& NetMap, std::map<std::string,int>& CellMap, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell );
-void Update_Gain( int CellID, std::vector<Net_t>&, std::vector<Cell_t>& );
+void Update_Gain( int CellID, std::map<int,Cell_t>* , std::vector<Net_t>&, std::vector<Cell_t>& );
+
 struct Cmptor{
 	bool operator()( const int& a, const int& b ) const {
 		return a>b;
 	}
 };
 
-void FM( std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
+std::map<int,Cell_t,Cmptor>::iterator get_nontrivial( std::map<int,Cell_t,Cmptor>& Map ){
+	while( !Map.empty() ){
+		if( Map.begin()->second.cempty() )
+			Map.erase( Map.begin() );
+		else
+			return Map.begin();
+	}
+	return Map.end();
+}
+
+void FM( double ratio, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 	// Balance placement
 	int cRegion[2];
 	cRegion[0] = vCell.size()/2;
@@ -80,7 +95,7 @@ void FM( std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 		for( int j=0; j<vNet[i].size(); j++ ){
 			vNet[i].cRegion[ vCell[ vNet[i][j] ].region ] ++;
 		}
-		if( cRegion[0] != cRegion[1] )
+		if( vNet[i].cRegion[0] != vNet[i].cRegion[1] )
 			nCut ++;
 		for( int j=0; j<vNet[i].size(); j++ ){
 			if( vNet[i].cRegion[  vCell[ vNet[i][j] ].region      ]==1 )
@@ -92,9 +107,9 @@ void FM( std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 	
 	// Pu object onto Bucket
 	std::map<int,Cell_t,Cmptor> Bucket[2];
-	std::map<int,Cell_t,Cmptor>::iterator itr;
+	std::map<int,Cell_t,Cmptor>::iterator itr, itrs[2];
 	for( int i=0; i<vCell.size(); i++ ){
-		Bucket[ vCell[i].region ][ vCell[i].gain ].push_front( &vCell[i] );
+		Bucket[ vCell[i].region ][ vCell[i].gain ].cpush_front( &vCell[i] );
 	}
 	/* Check object *
 	int count = 0;
@@ -104,7 +119,38 @@ void FM( std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 	std::cout<<"Cell in Bucket= "<< count <<std::endl;
 	std::cout<<"vCell.size()= "<< vCell.size() <<std::endl;
 	*/
-	
+	std::cout<< nCut<< std::endl;
+	int Bound[2];
+	Bound[0] = int((double) (0.5-ratio)*vCell.size());
+	Bound[1] = int((double) (0.5+ratio)*vCell.size());
+	for( int i=0; i<vCell.size(); i++ ){
+		itrs[0] = get_nontrivial( Bucket[0] );
+		itrs[1] = get_nontrivial( Bucket[1] );
+		itr = (itrs[0]!=Bucket[0].end() && itrs[1]!=Bucket[1].end())
+			? ( ( itrs[0]->first > itrs[1]->first )? itrs[0]: itrs[1] )
+			: ( itrs[0] != Bucket[0].end()? itrs[0]: itrs[1] );
+		assert( itr != Bucket[0].end() && itr != Bucket[1].end() );
+		Cell_t& Cell = *itr->second.next;
+		int cRegionNext[2];
+		cRegionNext[0] = cRegion[0] + ( Cell.region==0? -1: +1 );
+		cRegionNext[1] = cRegion[1] + ( Cell.region==1? -1: +1 );
+		//std::cout<< Bound[0]<<":"<<Bound[1]<<std::endl;
+		//std::cout<< cRegionNext[0] <<":"<< cRegionNext[1]<<std::endl;
+		if( Bound[0] <= (cRegionNext[0] ) && cRegionNext[1] <= Bound[1] ){
+			nCut += itr->first;
+			Update_Gain( &Cell- vCell.data(), (std::map<int,Cell_t>*) Bucket, vNet, vCell );
+			cRegion[0] = cRegionNext[0];
+			cRegion[1] = cRegionNext[1];
+		} else {
+			Cell.cunhook();
+			Cell.Lock = true;
+		}
+
+		//Cell.cunhook();
+		//if( itr->second.cempty() )\
+			Bucket[ Cell.region ].erase( itr );
+	}
+	std::cout << nCut<<std::endl;
 }
 
 int main( int argc, char * argv[] ){
@@ -129,10 +175,10 @@ int main( int argc, char * argv[] ){
 		std::cout << ";\n";
 	}
 	**/
-	FM( vNet, vCell );
+	FM( ratio, vNet, vCell );
 }
 
-void Update_Gain( int CellID, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
+void Update_Gain( int CellID, std::map<int,Cell_t>* Bucket, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 	Cell_t& Cell = vCell[CellID];
 	//Lock the base cell and complement its block;
 	Cell.Lock = true;
@@ -144,15 +190,22 @@ void Update_Gain( int CellID, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCe
 		//Check critical nets before the move
 		if( Net.cRegion[ To ] == 0 ){
 			for( int j=0; j<Net.size(); j++ ){
-				if( !vCell[ Net[j] ].Lock )
-					vCell[ Net[j] ].gain ++;
+				Cell_t& CellOp = vCell[ Net[j] ];
+				if( ! CellOp.Lock ){
+					CellOp.cunhook();
+					CellOp.gain ++;
+					Bucket[ CellOp.region ][ CellOp.gain ].cpush_front( &CellOp );
+				}
 			}
 		}
 		else
 		if( Net.cRegion[ To ] == 1 ){
 			for( int j=0; j<Net.size(); j++ ){
-				if( !vCell[ Net[j] ].Lock && vCell[ Net[j] ].region == To ){
-					vCell[ Net[j] ].gain --;
+				Cell_t& CellOp = vCell[ Net[j] ];
+				if( !CellOp.Lock && CellOp.region == To ){
+					CellOp.cunhook();
+					CellOp.gain --;
+					Bucket[ CellOp.region ][ CellOp.gain ].cpush_front( &CellOp );
 					break;
 				}
 			}
@@ -164,21 +217,29 @@ void Update_Gain( int CellID, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCe
 		/* check for critical nets after the move */
 		if( Net.cRegion[ From ] == 0 ){
 			for( int j=0; j<Net.size(); j++ ){
-				if( !vCell[ Net[j] ].Lock )
-					vCell[ Net[j] ].gain --;
+				Cell_t& CellOp = vCell[ Net[j] ];
+				if( !CellOp.Lock ){
+					CellOp.cunhook();
+					CellOp.gain --;
+					Bucket[ CellOp.region ][ CellOp.gain ].cpush_front( &CellOp );
+				}
 			}
 		}
 		else
 		if( Net.cRegion[ From ] == 1 ){
 			for( int j=0; j<Net.size(); j++ ){
-				if( !vCell[ Net[j] ].Lock && vCell[ Net[j] ].region == From ){
-					vCell[ Net[j] ].gain ++;
+				Cell_t& CellOp = vCell[ Net[j] ];
+				if( !CellOp.Lock && CellOp.region == From ){
+					CellOp.cunhook();
+					CellOp.gain ++;
+					Bucket[ CellOp.region ][ CellOp.gain ].cpush_front( &CellOp );
 					break;
 				}
 			}
 		}
 	}
 	Cell.region = (Cell.region+1)%2;
+	Cell.cunhook();
 }
 
 double ParseFile( char * ifname, std::map<std::string,int>& NetMap, std::map<std::string,int>& CellMap, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){

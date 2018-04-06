@@ -2,6 +2,8 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <cstdlib>
+#include <limits.h>
 #include <map>
 #include <vector>
 #include <assert.h>
@@ -53,7 +55,8 @@ public:
 	}
 };
 
-double ParseFile( char * ifname, std::map<std::string,int>& NetMap, std::map<std::string,int>& CellMap, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell );
+double ParseFile( char * ifname, std::map<std::string,int>& NetMap
+	, std::map<std::string,int>& CellMap, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell );
 void Update_Gain( int CellID, std::map<int,Cell_t>* , std::vector<Net_t>&, std::vector<Cell_t>& );
 
 struct Cmptor{
@@ -72,15 +75,52 @@ std::map<int,Cell_t,Cmptor>::iterator get_nontrivial( std::map<int,Cell_t,Cmptor
 	return Map.end();
 }
 
-void FM( double ratio, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
+void Apply_Change( int MinStep, std::vector<Cell_t>& vCell, std::vector<bool>& vInitState, std::vector<int>& vStep ){
+	for( int i=0; i<vCell.size(); i++ ){
+		vCell[i].region = vInitState[i]? 1: 0;
+	}
+	for( int i=0; i<MinStep; i++ ){
+		vCell[ vStep[i] ].region = (vCell[ vStep[i] ].region+1)%2;
+	}
+}
+
+int CountCut( std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
+	int LocalMinCut = 0;
+	for( int i=0; i<vNet.size(); i++ ){
+		int cRegion[2];
+		cRegion[0] = 0;
+		cRegion[1] = 0;
+		for( int j=0; j<vNet[i].size(); j++ ){
+			if( vCell[ vNet[i][j] ].region == 0 )
+				cRegion[0] ++;
+			else
+			if( vCell[ vNet[i][j] ].region == 1 )
+				cRegion[1] ++;
+			else
+				assert(false);
+		}
+		if( cRegion[0] != 0 && cRegion[1] != 0 )
+			LocalMinCut ++;
+	}
+	return LocalMinCut;
+}
+
+int FM( double ratio, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 	// Balance placement
-	int cRegion[2];
-	cRegion[0] = vCell.size()/2;
-	cRegion[1] = vCell.size()- cRegion[0];
-	for( int i=0; i<vCell.size(); i++ )
-		vCell[i].region = 1;
-	for( int i=0; i<vCell.size()/2; i++ )
-		vCell[i].region = 0;
+	int cRegion[2], cStep, MinStep;
+	cStep = 0;
+	MinStep = 0;
+	std::vector<bool> vInitState( vCell.size() );
+	std::vector<int> vStep( vCell.size() );
+	//assume that region is initialized.
+	cRegion[0] = 0;
+	cRegion[1] = 0;
+	for( int i=0; i<vCell.size(); i++ ){
+		assert( vCell[i].region == 0 || vCell[i].region == 1 );
+		vInitState[i] = (vCell[i].region == 1)? true: false;
+		cRegion[ vCell[i].region ] ++;
+	}
+
 	
 	for( int i=0; i<vCell.size(); i++ ){
 		vCell[i].Lock = false;
@@ -95,7 +135,7 @@ void FM( double ratio, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 		for( int j=0; j<vNet[i].size(); j++ ){
 			vNet[i].cRegion[ vCell[ vNet[i][j] ].region ] ++;
 		}
-		if( vNet[i].cRegion[0] != vNet[i].cRegion[1] )
+		if( vNet[i].cRegion[0] != 0 && vNet[i].cRegion[1] != 0 )
 			nCut ++;
 		for( int j=0; j<vNet[i].size(); j++ ){
 			if( vNet[i].cRegion[  vCell[ vNet[i][j] ].region      ]==1 )
@@ -119,11 +159,11 @@ void FM( double ratio, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 	std::cout<<"Cell in Bucket= "<< count <<std::endl;
 	std::cout<<"vCell.size()= "<< vCell.size() <<std::endl;
 	*/
-	std::cout<< nCut<< std::endl;
+	std::cout<<"Init cut="<< nCut<< std::endl;
 	int Bound[2];
 	int MinCut = nCut;
-	Bound[0] = int((double) (0.5-ratio)*vCell.size());
-	Bound[1] = int((double) (0.5+ratio)*vCell.size());
+	Bound[0] = int((double) 0.5*(1.0-ratio)*vCell.size());
+	Bound[1] = int((double) 0.5*(1.0+ratio)*vCell.size());
 	for( int i=0; i<vCell.size(); i++ ){
 		itrs[0] = get_nontrivial( Bucket[0] );
 		itrs[1] = get_nontrivial( Bucket[1] );
@@ -137,23 +177,29 @@ void FM( double ratio, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 		cRegionNext[1] = cRegion[1] + ( Cell.region==1? -1: +1 );
 		//std::cout<< Bound[0]<<":"<<Bound[1]<<std::endl;
 		//std::cout<< cRegionNext[0] <<":"<< cRegionNext[1]<<std::endl;
-		if( Bound[0] <= (cRegionNext[0] ) && cRegionNext[1] <= Bound[1] ){
+		//std::cout<< cRegion[0] <<":"<< cRegion[1]<<std::endl;
+		if( Bound[0] <= (cRegionNext[0] ) && cRegionNext[0] <= Bound[1] 
+		&& Bound[0] <= (cRegionNext[1] ) && cRegionNext[1] <= Bound[1] ){
 			nCut -= itr->first;
 			//std::cout<< nCut<<std::endl;
-			if( nCut < MinCut ) MinCut = nCut;
-			Update_Gain( &Cell- vCell.data(), (std::map<int,Cell_t>*) Bucket, vNet, vCell );
+			if( nCut <= MinCut 
+			|| ( nCut==MinCut && abs( cRegionNext[0]- cRegionNext[1] )< abs( cRegion[0]- cRegion[1] ) ) ){
+				MinCut = nCut;
+				MinStep = cStep+1;
+			}
+			int CellID = &Cell- vCell.data();
+			Update_Gain( CellID, (std::map<int,Cell_t>*) Bucket, vNet, vCell );
+			vStep[ cStep++ ] = CellID;
 			cRegion[0] = cRegionNext[0];
 			cRegion[1] = cRegionNext[1];
 		} else {
 			Cell.cunhook();
 			Cell.Lock = true;
 		}
-
-		//Cell.cunhook();
-		//if( itr->second.cempty() )\
-			Bucket[ Cell.region ].erase( itr );
 	}
-	std::cout << nCut<< ":" << MinCut <<std::endl;
+	std::cout<<"MinCut="<<MinCut<<", cStep="<<cStep<<std::endl;
+	Apply_Change( MinStep, vCell, vInitState, vStep );
+	return MinCut;
 }
 
 int main( int argc, char * argv[] ){
@@ -178,7 +224,57 @@ int main( int argc, char * argv[] ){
 		std::cout << ";\n";
 	}
 	/**/
-	FM( ratio, vNet, vCell );
+	size_t half_size = vCell.size()/2;
+	//initial
+	for( int i=0; i<half_size; i++ )
+		vCell[i].region = 0;
+	for( int i=half_size; i<vCell.size(); i++ )
+		vCell[i].region = 1;
+
+	int InitCut = CountCut( vNet, vCell );
+	int MinCut = INT_MAX, CurCut, Iter = 0;
+	bool Continue = true;
+	do {
+		CurCut = FM( ratio, vNet, vCell );
+		if( CurCut >= MinCut )
+			Continue = false;
+		MinCut = ( CurCut < MinCut )? CurCut: MinCut;
+		printf("Iteration %4d , Cut = %10d (min= %10d)\n", Iter, CurCut, MinCut );
+		Iter++;
+	} while( Continue );
+	std::cout << "MinCut: " << MinCut<< ", InitCut: "<< InitCut <<std::endl;
+
+	std::cout << CountCut( vNet,vCell) <<std::endl;
+	if( ofname ){
+		int cG1, cG2;
+		cG1 = 0;
+		cG2 = 0;
+		for( int i=0; i<vCell.size(); i++ ){
+			if( vCell[i].region == 0 )
+				cG1 ++;
+			else
+			if( vCell[i].region == 1 )
+				cG2 ++;
+			else
+				assert( false );
+		}
+		std::ofstream ostr( ofname, std::ios::out );
+//		ostr<<"Cutsize = "<< CountCut(vNet,vCell) << std::endl;
+		ostr<<"Cutsize = "<< MinCut << std::endl;
+		ostr<<"G1 "<< cG1 <<std::endl;
+		for( int i=0; i<vCell.size(); i++ ){
+			if( vCell[i].region == 0 )
+				ostr<< vCell[i].Name <<" ";
+		}
+		ostr<<";\n";
+		ostr<<"G2 "<< cG2 <<std::endl;
+		for( int i=0; i<vCell.size(); i++ ){
+			if( vCell[i].region == 1 )
+				ostr<< vCell[i].Name <<" ";
+		}
+		ostr<<";\n";
+		ostr.close();
+	}
 }
 
 void Update_Gain( int CellID, std::map<int,Cell_t>* Bucket, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
@@ -267,7 +363,7 @@ void ParseNet( std::istream& istr, int& nAllNet, int& nAllCell, std::map<std::st
 		CellMap[word] = nAllCell++ ;
 	}
 	if( nCell==1 ){
-		std::cout<<"Warning: signal terminal net: "<< NetName<< std::endl;
+		std::cout<<"Warning: single terminal net: "<< NetName<< std::endl;
 	}
 
 

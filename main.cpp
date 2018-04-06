@@ -121,6 +121,7 @@ void FM( double ratio, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 	*/
 	std::cout<< nCut<< std::endl;
 	int Bound[2];
+	int MinCut = nCut;
 	Bound[0] = int((double) (0.5-ratio)*vCell.size());
 	Bound[1] = int((double) (0.5+ratio)*vCell.size());
 	for( int i=0; i<vCell.size(); i++ ){
@@ -137,7 +138,9 @@ void FM( double ratio, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 		//std::cout<< Bound[0]<<":"<<Bound[1]<<std::endl;
 		//std::cout<< cRegionNext[0] <<":"<< cRegionNext[1]<<std::endl;
 		if( Bound[0] <= (cRegionNext[0] ) && cRegionNext[1] <= Bound[1] ){
-			nCut += itr->first;
+			nCut -= itr->first;
+			//std::cout<< nCut<<std::endl;
+			if( nCut < MinCut ) MinCut = nCut;
 			Update_Gain( &Cell- vCell.data(), (std::map<int,Cell_t>*) Bucket, vNet, vCell );
 			cRegion[0] = cRegionNext[0];
 			cRegion[1] = cRegionNext[1];
@@ -150,7 +153,7 @@ void FM( double ratio, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 		//if( itr->second.cempty() )\
 			Bucket[ Cell.region ].erase( itr );
 	}
-	std::cout << nCut<<std::endl;
+	std::cout << nCut<< ":" << MinCut <<std::endl;
 }
 
 int main( int argc, char * argv[] ){
@@ -174,7 +177,7 @@ int main( int argc, char * argv[] ){
 		}
 		std::cout << ";\n";
 	}
-	**/
+	/**/
 	FM( ratio, vNet, vCell );
 }
 
@@ -242,8 +245,61 @@ void Update_Gain( int CellID, std::map<int,Cell_t>* Bucket, std::vector<Net_t>& 
 	Cell.cunhook();
 }
 
+void ParseNet( std::istream& istr, int& nAllNet, int& nAllCell, std::map<std::string,int>& NetMap, std::map<std::string,int>& CellMap ){
+	std::string word;
+	if( !(istr>>word) ){
+		std::cout<<"missing net name" <<std::endl;
+		exit(1);
+	}
+	if( NetMap.find(word) != NetMap.end() ){
+		std::cout<<"Duplicate net name: "<< word <<std::endl;
+		exit(1);
+	}
+	NetMap[word]= nAllNet ++ ;
+	const char * NetName =  NetMap.find( word )->first.c_str();
+	int nCell = 0;
+	while( istr >> word ){
+		if( word == ";" )
+			break;
+		nCell++;
+		if( CellMap.find(word) != CellMap.end() )
+			continue;
+		CellMap[word] = nAllCell++ ;
+	}
+	if( nCell==1 ){
+		std::cout<<"Warning: signal terminal net: "<< NetName<< std::endl;
+	}
+
+
+}
+
+void BuildNet( std::istream& istr, std::map<std::string,int>& NetMap, std::map<std::string,int>& CellMap, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
+	std::string word;
+	std::map<std::string,int>::iterator mapitr;
+	if( !(istr>>word) ){
+		std::cout<<"create: missing net name: "<<std::endl;
+		exit(1);
+	}
+	mapitr = NetMap.find( word );
+	int NetID = mapitr->second;
+	assert( NetID < vNet.size() );
+	vNet[ NetID ].Name = (char*) mapitr->first.c_str();
+	while( istr>>word ){
+		if( word == ";" )
+			break;
+		mapitr = CellMap.find( word );
+		int CellID = mapitr->second;
+		assert( CellID < vCell.size() );
+		vCell[ CellID ].Name = (char*) mapitr->first.c_str();
+		vCell[ CellID ].push_back( NetID  );
+		vNet [ NetID  ].push_back( CellID );
+	}
+}
+
+
 double ParseFile( char * ifname, std::map<std::string,int>& NetMap, std::map<std::string,int>& CellMap, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 	std::ifstream fin( ifname, std::ios::in );
+	int cLine = 0;
 	double ratio;
 	fin>>ratio;
 	std::string line, word;
@@ -252,37 +308,13 @@ double ParseFile( char * ifname, std::map<std::string,int>& NetMap, std::map<std
 	nAllNet = 0;
 	nAllCell= 0;
 	nAllConn= 0;
-	while( std::getline( fin, line ) ){
-		if( line == "" )
-			continue;
-		std::istringstream isstr( line );
-		if( !(isstr>>word) ){
-			std::cout<<"missing keyword: NET: " << word <<std::endl;
+	bool OpenNet = false;
+	while( fin >> word ){			
+		if( word != "NET" ){
+			std::cout << "Undefined sequence: "<<word << std::endl;
 			exit(1);
 		}
-
-		if( !(isstr>>word) ){
-			std::cout<<"missing net name"<<std::endl;
-			exit(1);
-		}
-		if( NetMap.find(word) != NetMap.end() ){
-			std::cout<<"Duplicate net name: "<< word <<std::endl;
-			exit(1);
-		}
-		NetMap[word]= nAllNet ++ ;
-
-		int nCell = 0;
-		for( ; isstr>>word; nCell++, nAllConn++ ){
-			if( word == ";" )
-				continue;
-			if( CellMap.find(word) != CellMap.end() )
-				continue;
-			CellMap[word] = nAllCell++ ;
-		}
-		
-		if( nCell==1 ){
-			std::cout<<"Warning: signal terminal net"<< std::endl;
-		}
+		ParseNet( fin, nAllNet, nAllCell, NetMap, CellMap );
 	}
 	fin.clear();
 	fin.seekg( 0, std::ios::beg );
@@ -290,34 +322,13 @@ double ParseFile( char * ifname, std::map<std::string,int>& NetMap, std::map<std
 	fin >> ratio;
 	vNet.resize( nAllNet );
 	vCell.resize( nAllCell );
-	int cNet, cCell;
-	cNet = 0;
-	cCell= 0;
-	for( ; std::getline( fin, line ); cNet++ ){
-		if( line == "" )
-			continue;
-		std::istringstream isstr( line );
-		if( !(isstr>>word) ){
-			std::cout<<"create: missing keyword: NET"<<std::endl;
+	OpenNet = false;
+	while( fin >> word ){
+		if( word != "NET" ){
+			std::cout << "Undefined sequence: "<<word << std::endl;
 			exit(1);
 		}
-
-		if( !(isstr>>word) ){
-			std::cout<<"create: missing net name: "<< line<<std::endl;
-			exit(1);
-		}
-		mapitr = NetMap.find( word );
-		int NetID = mapitr->second;
-		vNet[ NetID ].Name = (char*) mapitr->first.c_str();
-		for( ; isstr>>word; cCell++ ){
-			if( word == ";" )
-				continue;
-			mapitr = CellMap.find( word );
-			int CellID = mapitr->second;
-			vCell[ CellID ].Name = (char*) mapitr->first.c_str();
-			vCell[ CellID ].push_back( NetID  );
-			vNet [ NetID  ].push_back( CellID );
-		}
+		BuildNet( fin, NetMap, CellMap, vNet, vCell );
 	}
 	fin.close();
 	return ratio;

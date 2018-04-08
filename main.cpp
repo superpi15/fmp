@@ -221,9 +221,9 @@ int FM( double ratio, std::vector<Net_t>& vNet, std::vector<Cell_t>& vCell ){
 	std::cout<<"Init cut="<< nCut<< std::endl;
 	int Bound[2], imba_block = 0, cforce_balance = 0;
 	int MinCut = nCut;
-	bool Once_leagal = is_leagal(Bound[0],Bound[1],cRegion[0]) && is_leagal(Bound[0],Bound[1],cRegion[1]);
 	Bound[0] = int((double) 0.5*(1.0-ratio)*vCell.size());
 	Bound[1] = int((double) 0.5*(1.0+ratio)*vCell.size());
+	bool Once_leagal = is_leagal(Bound[0],Bound[1],cRegion[0]) && is_leagal(Bound[0],Bound[1],cRegion[1]);
 	for( int i=0; i<vCell.size(); i++ ){
 		itrs[0] = get_nontrivial( Bucket[0] );
 		itrs[1] = get_nontrivial( Bucket[1] );
